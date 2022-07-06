@@ -1,0 +1,331 @@
+```{r setup, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(here)
+library(lubridate)
+library(obistools)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+When downloading the file from the GitHub repo, make sure that you select the correct version.
+
+```{r data download, include=FALSE}
+download.file("https://github.com/international-year-of-the-salmon/2022-shimada-data-template/blob/main/IYS2022_Shimada_Data_template.xlsx?raw=true", here::here("IYS_data_template", "IYS2022_Shimada_data.xlsx"), quiet = TRUE, mode = "wb")
+
+event <- read_excel(here("IYS_data_template", "IYS2022_Shimada_data.xlsx"), sheet = "4. SAMPLING EVENT INFO") %>% filter(Event_Type == "Trawl")
+```
+
+Create function to determine polygon coordinates required for the metadata:
+
+```{r polygon coordinates, include = FALSE}
+polygon_coords <- function(event){
+  event <- event %>% select(Latitude_Start_DecDeg, Longitude_Start_DecDeg) %>% 
+    drop_na(Latitude_Start_DecDeg, Longitude_Start_DecDeg) 
+  ch <- chull(event)
+  coords <- event[c(ch, ch[1]), ]
+  coords <- paste(coords$Latitude_Start_DecDeg, coords$Longitude_Start_DecDeg, sep = ",", collapse = " ")
+  coords
+}
+
+polygon_coords(event)
+```
+
+Create Event Core:
+
+```{r event_core, include = FALSE}
+event <- event %>% 
+  mutate(Time_Start = as.POSIXct(Time_Start, format = "%H:%M:%S"),
+         Time_End = as.POSIXct(Time_End, format = "%H:%M:%S")) %>%
+  mutate(Time_Start = strftime(Time_Start, format = "%H:%M:%S"),
+         Time_End = strftime(Time_End, format = "%H:%M:%S")) %>%
+  mutate(eventDate_start = paste0(format_ISO8601(as.POSIXct(paste0(as_date(
+    paste0(Year, "-", Month, "-", Day)), " ", Time_Start), tz ="UTC")), "Z"),
+         eventDate_finish = paste0(format_ISO8601(as.POSIXct(paste0(as_date(
+    paste0(Year, "-", Month, "-", Day)), " ", Time_End), tz = "UTC")), "Z"))
+
+# Quick manual QAQC to ensure that there's no sampling event occurring over 2 days:
+time_QAQC <- event %>% select(Station, Year, Month, Day, Time_Start, Time_End, eventDate_start, eventDate_finish)
+
+fixed_dates <- event %>% filter(Station %in% c(13, 15)) %>%
+  mutate(eventDate_finish = as.Date(eventDate_finish) + 1) %>%
+  mutate(eventDate_finish = paste0(eventDate_finish, "T", Time_End, "Z"))
+
+shimada_event <- subset(event, Station != c(13, 15))
+event <- rbind(shimada_event, fixed_dates) %>% arrange(Station)
+
+# Create final eventDate and QC
+event <- event %>%
+  mutate(eventDate = paste(eventDate_start, eventDate_finish, sep = "/"))
+obistools::check_eventdate(event)
+
+event$Year <- as.numeric(format(as.Date(event$eventDate), "%Y"))
+event$Month <- as.numeric(format(as.Date(event$eventDate), "%m"))
+event$Day <- as.numeric(format(as.Date(event$eventDate), "%d"))
+
+event_coordinates <- event %>%
+  select(eventID = Station_Event_ID,
+         Longitude_Start_DecDeg, Latitude_Start_DecDeg,
+         Longitude_End_DecDeg, Latitude_End_DecDeg) %>%
+  distinct(eventID, .keep_all = TRUE) %>%
+    mutate(footprintWKT = paste("LINESTRING (", Longitude_Start_DecDeg, Latitude_Start_DecDeg, ",", 
+                              Longitude_End_DecDeg, Latitude_End_DecDeg, ")")) 
+
+event_linestring <- obistools::calculate_centroid(event_coordinates$footprintWKT)
+event_linestring <- cbind(event_coordinates, event_linestring) %>%
+  select(eventID, footprintWKT, decimalLatitude, decimalLongitude, coordinateUncertaintyInMeters)
+
+event_trawl <- event %>%
+  select(eventID = Station_Event_ID,
+         eventDate,
+         Year, Month, Day,
+         minimumDepthInMeters = Minimum_Sampling_Depth_Meters,
+         maximumDepthInMeters = Maximum_Sampling_Depth_Meters) %>%
+  left_join(event_linestring, by = "eventID") %>%
+  distinct(eventID, .keep_all = TRUE) %>%
+  mutate(geodeticDatum = "WGS84")
+
+# Save locally:
+write_csv(event_trawl, here("standardized_data", "IYS2022_Shimada_event.csv"))
+```
+
+Next, create the occurrence extension for the overall catch: 
+
+```{r occurrence overall catch, eval = FALSE}
+occurrence_allCatch <- read_excel(here("IYS_data_template", "IYS2022_Shimada_data.xlsx"), sheet = "5. CATCH_FINAL INFO")     
+
+occurrence_allCatch <- occurrence_allCatch %>% rename(scientificname = Scientific_Name)
+unique_spp <- unique(occurrence_allCatch$scientificname) %>% as.data.frame()
+colnames(unique_spp) <- "scientificname"
+
+# Assign WoRMS LSID to the unique species:
+worms_id <- worrms::wm_records_names(unique(occurrence_allCatch$scientificname), marine_only = FALSE) %>% dplyr::bind_rows()
+
+# Find out which species are not found in the WoRMS database:
+worms_occ <- left_join(unique_spp, worms_id, by = "scientificname") %>% 
+  filter(is.na(AphiaID)) %>% distinct(scientificname)
+
+# Change the taxa names accordingly: 
+occurrence_allCatch$scientificname <- gsub("Phacellophora camtchatica", 
+                                           "Phacellophora camtschatica", occurrence_allCatch$scientificname)
+occurrence_allCatch$scientificname <- gsub("Amphipod",
+                                           "Amphipoda", occurrence_allCatch$scientificname)
+
+# So now we can run worrms::wm_records_names again, and there should be no NA in the AphiaID column. Be sure to inspect the result as sometimes multiple AphiaIDs are generated for the same taxa.    
+occurrence_allCatch_id <- worrms::wm_records_names(unique(occurrence_allCatch$scientificname), marine_only = FALSE) %>% bind_rows() 
+
+# Omit certain AphiaIDs that do not apply:
+occurrence_allCatch_id <- occurrence_allCatch_id %>% filter(!AphiaID %in% c("1077913", "1434994", "106331", "14775"))
+
+# Now that all unique entries have a WoRMS ID, connect this to the original data frame:
+shimada_occurrence_all <- left_join(occurrence_allCatch_id, occurrence_allCatch, by = "scientificname")
+
+# Omit biomass data from the occurrence extension:
+shimada_occurrence <- shimada_occurrence_all %>%
+  mutate(specificEpithet = stringr::word(scientificname, 2)) %>%
+  select(eventID = Station_Event_ID, occurrenceID = Catch_ID, 
+         scientificName = scientificname,
+         scientificNameID = `lsid`, 
+         scientificNameAuthorship = authority,
+         taxonomicStatus = status,
+         taxonRank = rank, 
+         lifeStage = Lifestage,
+         vernacularName = Species_recorded, 
+         individualCount = Catch_count, kingdom, phylum, class, order, family, genus, specificEpithet,
+         dateIdentified = `dateIdentified (UTC)`, identifiedBy, Comments) %>% distinct() %>%
+  mutate(basisOfRecord = "HumanObservation",
+         occurrenceStatus = "present")
+# Save locally:
+write_csv(shimada_occurrence, here("standardized_data", "IYS2022_shimada_occurrence_trawl_all.csv"))
+```
+
+Next, create the occurrence extension for the specimen catch: 
+
+```{r occurrence overall catch, eval = FALSE}
+occurrence_specimen <- read_excel(here("IYS_data_template", "IYS2022_Shimada_data.xlsx"), sheet = "6. SPECIMEN INFO")
+
+occurrence_specimen <- occurrence_specimen %>%
+  mutate(identificationQualifier = ifelse(grepl("sp.", occurrence_specimen$Scientific_Name), "sp. indet", ""))
+occurrence_specimen$Scientific_Name <- gsub("\\b sp.", "", occurrence_specimen$Scientific_Name)
+occurrence_specimen <- occurrence_specimen %>% rename(scientificname = Scientific_Name)
+unique_spp_specimen <- unique(occurrence_specimen$scientificname) %>% as.data.frame()
+colnames(unique_spp_specimen) <- "scientificname"
+
+# Assign WoRMS LSID to the unique species:
+worms_id <- worrms::wm_records_names(unique(occurrence_specimen$scientificname), marine_only = FALSE) %>% dplyr::bind_rows()
+
+# Find out which species are not found in the WoRMS database:
+worms_occ <- left_join(unique_spp_specimen, worms_id, by = "scientificname") %>% 
+  filter(is.na(AphiaID)) %>% distinct(scientificname)
+
+# Change the taxa names accordingly: 
+occurrence_specimen$scientificname <- gsub("Phacellophora camtchatica", 
+                                           "Phacellophora camtschatica", occurrence_specimen$scientificname)
+occurrence_specimen$scientificname <- gsub("Onychoteuthis borealijaponicus",
+                                           "Onychoteuthis borealijaponica", occurrence_specimen$scientificname)
+
+# So now we can run worrms::wm_records_names again, and there should be no NA in the AphiaID column. Be sure to inspect the result as sometimes multiple AphiaIDs are generated for the same taxa.    
+occurrence_specimen_id <- worrms::wm_records_names(unique(occurrence_specimen$scientificname), marine_only = FALSE) %>% bind_rows() 
+
+# Omit certain AphiaIDs that do not apply:
+occurrence_specimen_id <- occurrence_specimen_id %>% filter(!AphiaID %in% c("1077913","1434944", "106331"))
+
+# Now that all unique entries have a WoRMS ID, connect this to the original data frame:
+shimada_occurrence_specimen <- left_join(occurrence_specimen_id, occurrence_specimen, by = "scientificname")
+
+# Omit biomass data from the occurrence extension:
+shimada_occ_specimen <- shimada_occurrence_specimen %>%
+  mutate(specificEpithet = stringr::word(scientificname, 2)) %>%
+  select(eventID = Station_Event_ID, 
+         occurrenceID = Specimen_ID, 
+         scientificName = scientificname,
+         scientificNameID = `lsid`, 
+         scientificNameAuthorship = authority,
+         taxonomicStatus = status,
+         taxonRank = rank, 
+         lifeStage = Lifestage,
+         vernacularName = common_name, 
+         identificationQualifier, kingdom, phylum, class, order, family, genus, specificEpithet) %>% distinct() %>%
+  mutate(basisOfRecord = "HumanObservation",
+         occurrenceStatus = "present")
+
+# Save locally:
+write_csv(shimada_occ_specimen, here("standardized_data", "IYS2022_shimada_occurrence_trawl_specimen.csv"))
+```
+
+Combine both occurrence extensions into a final data table:
+
+```{r occurrence, eval = FALSE}
+Shimada2022_occ <- dplyr::bind_rows(shimada_occurrence, shimada_occ_specimen)
+
+# To re-order the occurrenceID, use following code:
+order <- stringr::str_sort(Shimada2022_occ$occurrenceID, numeric=TRUE)
+Shimada2022_occ <- Shimada2022_occ[match(order, Shimada2022_occ$occurrenceID),]
+
+# Remove NA and replace with empty cells:
+Shimada2022_occ <- sapply(Shimada2022_occ, as.character)
+Shimada2022_occ[is.na(Shimada2022_occ)] <- ""
+Shimada2022_occ <- as.data.frame(Shimada2022_occ)
+
+# Check if occurrenceIDs are all unique - answer should be TRUE:
+length(unique(Shimada2022_occ$occurrenceID)) == nrow(Shimada2022_occ)
+
+# Save the occurrence Core locally and in Google Drive:
+write_csv(Shimada2022_occ, here("standardized_data", "Shimada2022_occ.csv"))
+```
+
+Create resourceRelationship extension: 
+
+```{r resourceRelationship, eval = FALSE}
+Shimada2022_resourceRelationship <- Shimada2022_occ %>%
+  select(eventID, occurrenceID, scientificName, individualCount)
+Shimada2022_resourceRelationship$individualCount <- as.numeric(Shimada2022_resourceRelationship$individualCount)
+  
+Shimada2022_resourceRelationship <- Shimada2022_resourceRelationship %>%
+  mutate(resourceID = ifelse(is.na(individualCount), Shimada2022_occ$occurrenceID, NA)) %>%
+  group_by(eventID, scientificName) %>%
+  filter(n() != 1) %>%
+  ungroup()
+
+Shimada2022_resourceRelationship <- Shimada2022_resourceRelationship %>%
+  mutate(relatedResourceID = ifelse(is.na(individualCount), NA, Shimada2022_occ$occurrenceID)) %>%
+  mutate(relationshipOfResource = ifelse(!is.na(resourceID), "is a subset of", NA)) %>%
+  dplyr::arrange(eventID, scientificName) %>%
+  fill(relatedResourceID) %>%
+  filter(!is.na(resourceID))
+
+order <- stringr::str_sort(Shimada2022_resourceRelationship$resourceID, numeric = TRUE)
+Shimada2022_resourceRelationship <- Shimada2022_resourceRelationship[match(order, Shimada2022_resourceRelationship$resourceID),]
+Shimada2022_resourceRelationship <- Shimada2022_resourceRelationship %>%
+  mutate(resourceRelationshipID = paste(relatedResourceID, "rr", sep = "-"),
+         ID = sprintf("%03d", row_number()),
+         resourceRelationshipID = paste(resourceRelationshipID, ID, sep = "-")) %>%
+  select(eventID, resourceRelationshipID, resourceID, relationshipOfResource, relatedResourceID)
+
+write_csv(Shimada2022_resourceRelationship, here("standardized_data", "Shimada2022_resourceRelationship.csv"))
+```
+
+Create eMOF extension data table:
+
+```{r eMOF, eval = FALSE}
+Shimada2022_trawl_allCatch_eMOF <- shimada_occurrence_all %>%
+  select(eventID = Station_Event_ID,
+         occurrenceID = Catch_ID,
+         individualCount = Catch_count,
+         Catch_weight,
+         Lifestage,
+         Count_method) %>%
+  mutate_all(as.character) %>%
+  pivot_longer(cols = c(individualCount:Lifestage),
+               names_to = "measurementType",
+               values_to = "measurementValue") %>%
+  rename(measurementMethod = Count_method)
+
+Shimada2022_trawl_allCatch_eMOF <- Shimada2022_trawl_allCatch_eMOF %>%
+  mutate(measurementID = paste0(occurrenceID, measurementType, sep = "-"),
+         measurementTypeID = case_when(
+           measurementType == "individualCount" ~ "http://vocab.nerc.ac.uk/collection/P01/current/OCOUNT01/",
+           measurementType == "Catch_weight" ~ "http://vocab.nerc.ac.uk/collection/S06/current/S0600088/",
+           measurementType == "Lifestage" ~ "http://vocab.nerc.ac.uk/collection/P01/current/LSTAGE01/"),
+         measurementUnit = case_when(
+           measurementType == "individualCount" ~ "individuals",
+           measurementType == "Catch_Weight" ~ "kilogram"),
+         measurementUnitID = case_when(
+           measurementUnit == "kilogram" ~ "http://vocab.nerc.ac.uk/collection/P06/current/KGXX/",
+           measurementUnit == "individuals" ~ "http://vocab.nerc.ac.uk/collection/P06/current/UUUU/"),
+         measurementValueID = case_when(
+           measurementValue == "juvenile" ~ "http://vocab.nerc.ac.uk/collection/S11/current/S1127/",
+           measurementValue == "Immature" ~ "http://vocab.nerc.ac.uk/collection/S11/current/S1171/",
+           measurementValue == "Larvae" ~ "http://vocab.nerc.ac.uk/collection/S11/current/S1128/",
+           measurementValue == "adult" ~ "http://vocab.nerc.ac.uk/collection/S11/current/S1116/")) %>%
+  select(eventID, occurrenceID, measurementID, measurementType, measurementTypeID, measurementValue, measurementValueID,
+         measurementUnit, measurementUnitID, measurementMethod)
+
+# And for the individual specimen data:
+Shimada2022_ind_eMOF <- shimada_occurrence_specimen %>%
+  select(eventID = Station_Event_ID,
+         occurrenceID = Specimen_ID, 
+         Lifestage, Specimen_Length, Specimen_Weight, Sex) %>%
+  mutate_all(as.character) %>%
+  pivot_longer(cols = Lifestage:Sex,
+               names_to = "measurementType", 
+               values_to = "measurementValue") %>%
+  mutate(measurementID = paste(occurrenceID, measurementType, sep = "-"),
+         measurementTypeID = case_when(
+           measurementType == "Lifestage" ~ "http://vocab.nerc.ac.uk/collection/P01/current/LSTAGE01/",
+           measurementType == "Sex" ~ "http://vocab.nerc.ac.uk/collection/P01/current/ENTSEX01/",
+           measurementType == "Specimen_Length" ~ "http://vocab.nerc.ac.uk/collection/P01/current/OBSINDLX/",
+           measurementType == "Specimen_Weight" ~ "http://vocab.nerc.ac.uk/collection/S06/current/S0600088/"),
+         measurementUnit = case_when(
+           measurementType == "Length" ~ "centimeters",
+           measurementType == "Weight" ~ "kilograms"),
+         measurementUnitID = case_when(
+           measurementUnit == "kilograms" ~ "http://vocab.nerc.ac.uk/collection/P06/current/KGXX/",
+           measurementUnit == "centimeters" ~ "http://vocab.nerc.ac.uk/collection/P06/current/ULCM/"),
+         measurementValueID = case_when(
+           measurementValue == "?" ~ "https://vocab.nerc.ac.uk/collection/S10/current/S105/",
+           measurementValue == "f" ~ "http://vocab.nerc.ac.uk/collection/S10/current/S102/",
+           measurementValue == "m" ~ "https://vocab.nerc.ac.uk/collection/S10/current/S103/",
+           measurementValue == "None" ~ "http://vocab.nerc.ac.uk/collection/S11/current/S1131/",
+           measurementValue == "Immature" ~ "http://vocab.nerc.ac.uk/collection/S11/current/S1171/",
+           measurementValue == "Adult" ~ "http://vocab.nerc.ac.uk/collection/S11/current/S1116/",
+           measurementValue == "adult" ~ "http://vocab.nerc.ac.uk/collection/S11/current/S1116/",
+           measurementValue == "Juvenile" ~ "http://vocab.nerc.ac.uk/collection/S11/current/S1127/",
+           measurementValue == "larvae" ~ "http://vocab.nerc.ac.uk/collection/S11/current/S1128/")) %>%
+  select(eventID, occurrenceID, measurementID, measurementType, measurementTypeID, measurementValue, measurementValueID,
+         measurementUnit, measurementUnitID)
+```
+
+Combine the two extended measurementOrFact extensions into a single eMOF extension, and save locally and in GoogleDrive:
+
+``` {r}
+Shimada2022_eMOF <- dplyr::bind_rows(Shimada2022_trawl_allCatch_eMOF, Shimada2022_ind_eMOF)
+
+# Remove NA and replace with empty cells:
+Shimada2022_eMOF <- sapply(Shimada2022_eMOF, as.character)
+Shimada2022_eMOF[is.na(Shimada2022_eMOF)] <- ""
+Shimada2022_eMOF <- as.data.frame(Shimada2022_eMOF)
+
+# Save locally
+write_csv(Shimada2022_eMOF, here("standardized_data", "Shimada2022_eMOF.csv"))
+```
