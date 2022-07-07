@@ -86,7 +86,7 @@ event_trawl <- event %>%
   mutate(geodeticDatum = "WGS84")
 
 # Save locally:
-write_csv(event_trawl, here("standardized_data", "IYS2022_Shimada_event.csv"))
+write_csv(event_trawl, here("standardized_data", "Shimada2022_event.csv"))
 ```
 
 Next, create the occurrence extension for the overall catch: 
@@ -248,6 +248,93 @@ write_csv(Shimada2022_resourceRelationship, here("standardized_data", "Shimada20
 Create eMOF extension data table:
 
 ```{r eMOF, eval = FALSE}
+# Data table for the facts related to the Research Vessel:
+shimada2022_rv <- event %>%
+  select(eventID = Station_Event_ID) %>%
+  mutate_all(as.character) %>%
+  mutate(measurementType = "Research Vessel",
+         measurementTypeID = "http://vocab.nerc.ac.uk/collection/L06/current/31/",
+         measurementValue = "R/V Bell M. Shimada",
+         measurementValueID = "http://vocab.nerc.ac.uk/collection/C17/current/3322/",
+         measurementUnit = NA,
+         measurementUnitID = NA) %>% distinct()
+
+# Data table for the bottom depth at each sampling station:
+shimada2022_bottomdepth <- event %>%
+  select(eventID = Station_Event_ID,
+         Bottom_Depth_Meters = `Bottom_Depth*_Meters`) %>%
+  mutate_all(as.character) %>%
+  pivot_longer(cols = Bottom_Depth_Meters,
+               names_to = "measurementType",
+               values_to = "measurementValue") %>%
+  mutate(measurementTypeID = case_when(
+           measurementType == "Bottom_Depth_Meters" ~ "http://vocab.nerc.ac.uk/collection/P09/current/BATH/"),
+         measurementUnit = "meters",
+         measurementUnitID = case_when(
+           measurementUnit == "meters" ~ "http://vocab.nerc.ac.uk/collection/P06/current/ULAA/"),
+         measurementValueID = NA,
+         measurementID = paste(eventID, measurementType, sep = "-")) %>%
+  select(eventID, measurementID, measurementType, measurementTypeID, measurementValue, measurementValueID,
+         measurementUnit, measurementUnitID)
+
+# Data table for the sampling effort:
+shimada2022_samplingEffort <- event %>%
+  select(eventID = Station_Event_ID,
+         Sampling_Duration_Minutes,
+         Tow_speed_kilometers_per_hour,
+         Tow_distance_nautical_miles) %>%
+  mutate_all(as.character) %>%
+  pivot_longer(cols = Sampling_Duration_Minutes:Tow_distance_nautical_miles,
+               names_to = "measurementType",
+               values_to = "measurementValue") %>%
+  mutate(measurementTypeID = case_when(
+           measurementType == "Sampling_Duration_Minutes" ~ "http://vocab.nerc.ac.uk/collection/P01/current/AZDRZZ01/",
+           measurementType == "Tow_speed_kilometers_per_hour" ~ "http://vocab.nerc.ac.uk/collection/P01/current/TOWSPEED/",
+           measurementType == "Tow_distance_nautical_miles" ~ "http://vocab.nerc.ac.uk/collection/P01/current/LENTRACK/"),
+         measurementUnit = case_when(
+           measurementType == "Sampling_Duration_minutes" ~ "minutes",
+           measurementType == "Tow_speed_kilometers_per_hour" ~ "knots",
+           measurementType == "Tow_distance_nautical_miles" ~ "nautical miles"),
+         measurementUnitID = case_when(
+           measurementUnit == "minutes" ~ "http://vocab.nerc.ac.uk/collection/P06/current/UMIN/",
+           measurementUnit == "knots" ~ "http://vocab.nerc.ac.uk/collection/P06/current/UKNT/",
+           measurementUnit == "nautical miles" ~ "http://vocab.nerc.ac.uk/collection/P06/current/NTML/"),
+         measurementValueID = NA,
+         measurementID = paste(eventID, measurementType, sep = "-")) %>%
+  select(eventID, measurementID, measurementType, measurementTypeID, measurementValue, measurementValueID,
+         measurementUnit, measurementUnitID)
+
+# Data table for the oceanic/atmospheric conditions during the sampling event:
+shimada2022_conditions <- event %>%
+  select(eventID = Station_Event_ID,
+         Wind_Direction_Degrees,
+         Wind_Speed_kilometers_per_hour,
+         Wave_height_Meters, 
+         Swell_height_Meters) %>%
+  mutate_all(as.character) %>%
+  pivot_longer(cols = Wind_Direction_Degrees:Swell_height_Meters,
+               names_to = "measurementType",
+               values_to = "measurementValue") %>%
+  mutate(measurementTypeID = case_when(
+           measurementType == "Wave_height_Meters" ~ "http://vocab.nerc.ac.uk/collection/P07/current/JNQS0CMX/",
+           measurementType == "Swell_height_Meters" ~ "http://vocab.nerc.ac.uk/collection/P09/current/SWHT/",
+           measurementType == "Wind_Direction_Degrees" ~ "http://vocab.nerc.ac.uk/collection/B39/current/relwinddir/",
+           measurementType == "Wind_Speed_kilometers_per_hour" ~ "http://vocab.nerc.ac.uk/collection/P07/current/CFSN0038/"),
+         measurementUnit = case_when(
+           measurementType == "Wave_height_Meters" ~ "meters",
+           measurementType == "Swell_height_Meters" ~ "meters",
+           measurementType == "Wind_Direction_Degrees" ~ "degrees",
+           measurementType == "Wind_Speed_kilometers_per_hour" ~ "knots"),
+         measurementUnitID = case_when(
+           measurementUnit == "meters" ~ "http://vocab.nerc.ac.uk/collection/P06/current/ULAA/",
+           measurementUnit == "degrees" ~ "http://vocab.nerc.ac.uk/collection/P06/current/UAAA/",
+           measurementUnit == "knots" ~ "http://vocab.nerc.ac.uk/collection/P06/current/UKNT/"),
+         measurementValueID = NA,
+         measurementID = paste(eventID, measurementType, sep = "-")) %>% 
+  drop_na(measurementValue) %>%
+  select(eventID, measurementID, measurementType, measurementTypeID, measurementValue, measurementValueID,
+         measurementUnit, measurementUnitID)
+
 Shimada2022_trawl_allCatch_eMOF <- shimada_occurrence_all %>%
   select(eventID = Station_Event_ID,
          occurrenceID = Catch_ID,
@@ -316,10 +403,15 @@ Shimada2022_ind_eMOF <- shimada_occurrence_specimen %>%
          measurementUnit, measurementUnitID)
 ```
 
-Combine the two extended measurementOrFact extensions into a single eMOF extension, and save locally and in GoogleDrive:
+Combine the extended measurementOrFact extensions into a single eMOF extension, and save locally and in GoogleDrive:
 
 ``` {r}
-Shimada2022_eMOF <- dplyr::bind_rows(Shimada2022_trawl_allCatch_eMOF, Shimada2022_ind_eMOF)
+Shimada2022_eMOF <- dplyr::bind_rows(shimada2022_rv,
+                                     shimada2022_bottomdepth,
+                                     shimada2022_samplingEffort,
+                                     shimada2022_conditions,
+                                     Shimada2022_trawl_allCatch_eMOF,
+                                     Shimada2022_ind_eMOF)
 
 # Remove NA and replace with empty cells:
 Shimada2022_eMOF <- sapply(Shimada2022_eMOF, as.character)
