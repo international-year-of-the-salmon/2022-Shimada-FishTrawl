@@ -87,6 +87,8 @@ event_trawl <- event %>%
 
 # Save locally:
 write_csv(event_trawl, here("standardized_data", "Shimada2022_event.csv"))
+
+event_trawl[duplicated(event_trawl$eventID),] # should be none. 
 ```
 
 Next, create the occurrence extension for the overall catch: 
@@ -168,7 +170,7 @@ occurrence_specimen$scientificname <- gsub("Onychoteuthis borealijaponicus",
 occurrence_specimen_id <- worrms::wm_records_names(unique(occurrence_specimen$scientificname), marine_only = FALSE) %>% bind_rows() 
 
 # Omit certain AphiaIDs that do not apply:
-occurrence_specimen_id <- occurrence_specimen_id %>% filter(!AphiaID %in% c("1077913","1434944", "106331"))
+occurrence_specimen_id <- occurrence_specimen_id %>% filter(!AphiaID %in% c("1077913","1434994", "106331"))
 
 # Now that all unique entries have a WoRMS ID, connect this to the original data frame:
 shimada_occurrence_specimen <- left_join(occurrence_specimen_id, occurrence_specimen, by = "scientificname")
@@ -209,6 +211,7 @@ Shimada2022_occ <- as.data.frame(Shimada2022_occ)
 
 # Check if occurrenceIDs are all unique - answer should be TRUE:
 length(unique(Shimada2022_occ$occurrenceID)) == nrow(Shimada2022_occ)
+Shimada2022_occ[duplicated(Shimada2022_occ$occurrenceID),]
 
 # Save the occurrence Core locally and in Google Drive:
 write_csv(Shimada2022_occ, here("standardized_data", "Shimada2022_occ.csv"))
