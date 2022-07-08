@@ -5,7 +5,7 @@
 🤖 See the metadata record for this dataset here: https://doi.org/10.21966/nt8w-je90
 
 🐟 The repository is structured as follows: 
-  * `original_data` contains processed data files that have been sent to the IYS Data Scientists that have not been formatted to the IYS Data Template.
+  * `original_data` contains processed data files that have been sent to the IYS Data Scientists that have not been formatted to the IYS Data Template. If this folder is not included in the data package, that means that the original data has all been processed and provided in the IYS Data Template. 
   * `IYS_data_template` contains the processed data files that have been provided in the IYS Data Template.
   * `standardized_data` contains the standardized data tables as they will be published to OBIS or ERDDAP. 
   * `scripts` contains the code used to format the data files from either the `original_data` or `IYS_data_template` folder to the data tables as found in `standardized_data`.
