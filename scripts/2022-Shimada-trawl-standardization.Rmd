@@ -191,10 +191,18 @@ shimada_occ_specimen <- shimada_occurrence_specimen %>%
          taxonomicStatus = status,
          taxonRank = rank, 
          lifeStage = Lifestage,
+         sex = Sex,
          vernacularName = common_name, 
          identificationQualifier, kingdom, phylum, class, order, family, genus, specificEpithet) %>% distinct() %>%
   mutate(basisOfRecord = "HumanObservation",
          occurrenceStatus = "present")
+
+# Change sex, replacing m with male, f with female:
+shimada_occ_specimen <- shimada_occ_specimen %>%
+  mutate(sex = ifelse(sex == "m", "male", sex),
+         sex = ifelse(sex == "f", "female", sex),
+         sex = ifelse(sex == "?", "unknown", sex),
+         sex = ifelse(sex == "f?", "female?", sex))
 
 # Save locally:
 write_csv(shimada_occ_specimen, here("standardized_data", "IYS2022_shimada_occurrence_trawl_specimen.csv"))
