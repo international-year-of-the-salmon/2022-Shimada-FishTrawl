@@ -80,10 +80,15 @@ event_trawl <- event %>%
          eventDate,
          Year, Month, Day,
          minimumDepthInMeters = Minimum_Sampling_Depth_Meters,
-         maximumDepthInMeters = Maximum_Sampling_Depth_Meters) %>%
+         maximumDepthInMeters = Maximum_Sampling_Depth_Meters,
+         sampleSizeValue = Sampling_Duration_Minutes) %>%
   left_join(event_linestring, by = "eventID") %>%
   distinct(eventID, .keep_all = TRUE) %>%
-  mutate(geodeticDatum = "WGS84")
+  mutate(geodeticDatum = "WGS84",
+         samplingEffort = "midwater trawl",
+         sampleSizeUnit = "minutes",
+         institutionCode = "NWFSC",
+         institutionID = "https://edmo.seadatanet.org/report/3588")
 
 # Save locally:
 write_csv(event_trawl, here("standardized_data", "Shimada2022_event.csv"))
