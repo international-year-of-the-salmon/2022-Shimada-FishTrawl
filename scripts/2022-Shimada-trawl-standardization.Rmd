@@ -238,13 +238,13 @@ Shimada2022_resourceRelationship <- Shimada2022_occ %>%
 Shimada2022_resourceRelationship$individualCount <- as.numeric(Shimada2022_resourceRelationship$individualCount)
   
 Shimada2022_resourceRelationship <- Shimada2022_resourceRelationship %>%
-  mutate(resourceID = ifelse(is.na(individualCount), Shimada2022_occ$occurrenceID, NA)) %>%
+  mutate(resourceID = ifelse(is.na(individualCount), Shimada2022_resourceRelationship$occurrenceID, NA)) %>%
   group_by(eventID, scientificName) %>%
   filter(n() != 1) %>%
   ungroup()
 
 Shimada2022_resourceRelationship <- Shimada2022_resourceRelationship %>%
-  mutate(relatedResourceID = ifelse(is.na(individualCount), NA, Shimada2022_occ$occurrenceID)) %>%
+  mutate(relatedResourceID = ifelse(is.na(individualCount), NA, Shimada2022_resourceRelationship$occurrenceID)) %>%
   mutate(relationshipOfResource = ifelse(!is.na(resourceID), "is a subset of", NA)) %>%
   dplyr::arrange(eventID, scientificName) %>%
   fill(relatedResourceID) %>%
