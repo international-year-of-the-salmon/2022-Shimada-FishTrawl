@@ -142,6 +142,7 @@ shimada_occurrence <- shimada_occurrence_all %>%
          dateIdentified = `dateIdentified (UTC)`, identifiedBy, Comments) %>% distinct() %>%
   mutate(basisOfRecord = "HumanObservation",
          occurrenceStatus = "present")
+
 # Save locally:
 write_csv(shimada_occurrence, here("standardized_data", "IYS2022_shimada_occurrence_trawl_all.csv"))
 ```
@@ -388,19 +389,27 @@ Shimada2022_trawl_allCatch_eMOF <- Shimada2022_trawl_allCatch_eMOF %>%
 Shimada2022_ind_eMOF <- shimada_occurrence_specimen %>%
   select(eventID = Station_Event_ID,
          occurrenceID = Specimen_ID, 
-         Lifestage, Specimen_Length, Specimen_Weight, Sex) %>%
+         Lifestage, Specimen_Length, Specimen_Weight, Sex, Length_Type) %>%
   mutate_all(as.character) %>%
   pivot_longer(cols = Lifestage:Sex,
                names_to = "measurementType", 
                values_to = "measurementValue") %>%
   mutate(measurementID = paste(occurrenceID, measurementType, sep = "-"),
+         measurementType = ifelse(measurementType == "Specimen_Length" & Length_Type == "Total length", "Specimen total length", measurementType),
+         measurementType = ifelse(measurementType == "Specimen_Length" & Length_Type == "Fork length", "Specimen fork length", measurementType),
+         measurementType = ifelse(measurementType == "Specimen_Length" & Length_Type == "Mantle length", "Specimen mantle length", measurementType),
+         measurementType = ifelse(measurementType == "Specimen_Length" & Length_Type == "Bell diameter", "Specimen bell diameter", measurementType),
          measurementTypeID = case_when(
            measurementType == "Lifestage" ~ "http://vocab.nerc.ac.uk/collection/P01/current/LSTAGE01/",
            measurementType == "Sex" ~ "http://vocab.nerc.ac.uk/collection/P01/current/ENTSEX01/",
-           measurementType == "Specimen_Length" ~ "http://vocab.nerc.ac.uk/collection/P01/current/OBSINDLX/",
+           measurementType == "Specimen total length" ~ "http://vocab.nerc.ac.uk/collection/P01/current/TL01XX01",
+           measurementType == "Specimen fork length" ~ "http://vocab.nerc.ac.uk/collection/P01/current/FL01XX01/",
+           measurementType == "Specimen mantle length" ~ "http://vocab.nerc.ac.uk/collection/P01/current/DML1XX01/",
+           measurementType == "Specimen bell diameter" ~ "http://vocab.nerc.ac.uk/collection/P01/current/OBSINDDM/",
            measurementType == "Specimen_Weight" ~ "http://vocab.nerc.ac.uk/collection/S06/current/S0600088/"),
          measurementUnit = case_when(
-           measurementType == "Length" ~ "centimeters",
+           measurementType %in% c("Specimen total length", "Specimen fork length", "Specimen mantle length", 
+                                  "Specimen bell diameter") ~ "centimeters",
            measurementType == "Weight" ~ "kilograms"),
          measurementUnitID = case_when(
            measurementUnit == "kilograms" ~ "http://vocab.nerc.ac.uk/collection/P06/current/KGXX/",
