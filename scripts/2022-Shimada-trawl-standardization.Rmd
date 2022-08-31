@@ -88,7 +88,9 @@ event_trawl <- event %>%
          samplingEffort = "midwater trawl",
          sampleSizeUnit = "minutes",
          institutionCode = "NWFSC",
-         institutionID = "https://edmo.seadatanet.org/report/3588")
+         institutionID = "https://edmo.seadatanet.org/report/3588",
+         datasetID = "https://doi.org/10.21966/nt8w-je90",
+         bibliographicCitation = "Weitkamp, L., Farley, E., Howard, K., Garcia, S., Murphy, J., & Moss, J. (2022). Trawl Data from the R/V Bell M. Shimada during the 2022 International Year of the Salmon Pan-Pacific Winter High Seas Expedition [Data set]. North Pacific Anadromous Fish Commission. https://doi.org/10.21966/nt8w-je90")
 
 # Save locally:
 write_csv(event_trawl, here("standardized_data", "Shimada2022_event.csv"))
@@ -101,6 +103,7 @@ Next, create the occurrence extension for the overall catch:
 ```{r occurrence overall catch, eval = FALSE}
 occurrence_allCatch <- read_excel(here("IYS_data_template", "IYS2022_Shimada_data.xlsx"), sheet = "5. CATCH_FINAL INFO")     
 
+occurrence_allCatch$verbatimIdentification <- occurrence_allCatch$Scientific_Name
 occurrence_allCatch <- occurrence_allCatch %>% rename(scientificname = Scientific_Name)
 unique_spp <- unique(occurrence_allCatch$scientificname) %>% as.data.frame()
 colnames(unique_spp) <- "scientificname"
@@ -134,6 +137,7 @@ shimada_occurrence <- shimada_occurrence_all %>%
          scientificName = scientificname,
          scientificNameID = `lsid`, 
          scientificNameAuthorship = authority,
+         verbatimIdentification,
          taxonomicStatus = status,
          taxonRank = rank, 
          lifeStage = Lifestage,
@@ -152,6 +156,7 @@ Next, create the occurrence extension for the specimen catch:
 ```{r occurrence overall catch, eval = FALSE}
 occurrence_specimen <- read_excel(here("IYS_data_template", "IYS2022_Shimada_data.xlsx"), sheet = "6. SPECIMEN INFO")
 
+occurrence_specimen$verbatimIdentification <- occurrence_specimen$Scientific_Name
 occurrence_specimen <- occurrence_specimen %>%
   mutate(identificationQualifier = ifelse(grepl("sp.", occurrence_specimen$Scientific_Name), "sp. indet", ""))
 occurrence_specimen$Scientific_Name <- gsub("\\b sp.", "", occurrence_specimen$Scientific_Name)
@@ -187,6 +192,7 @@ shimada_occ_specimen <- shimada_occurrence_specimen %>%
   select(eventID = Station_Event_ID, 
          occurrenceID = Specimen_ID, 
          scientificName = scientificname,
+         verbatimIdentification,
          scientificNameID = `lsid`, 
          scientificNameAuthorship = authority,
          taxonomicStatus = status,
